@@ -67,7 +67,7 @@ func parseFlags() (cliConfig, error) {
 	var cfg cliConfig
 	flag.StringVar(&cfg.cidr, "cidr", "", "CIDR filter, comma-separated, e.g. 192.168.1.0/24")
 	flag.StringVar(&cfg.ports, "ports", "1-65535", "Port filter, e.g. 80,443,5000-6000")
-	flag.DurationVar(&cfg.timeout, "timeout", 5*time.Second, "Discovery timeout per browse stage")
+	flag.DurationVar(&cfg.timeout, "timeout", 5*time.Second, "Total discovery budget")
 	flag.DurationVar(&cfg.probeTimeout, "probe-timeout", 2*time.Second, "Probe timeout per asset")
 	flag.IntVar(&cfg.concurrency, "concurrency", 16, "Max concurrent banner probes")
 	flag.StringVar(&cfg.iface, "iface", "", "Optional interface name for mDNS browsing")

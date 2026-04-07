@@ -35,7 +35,7 @@ Flags:
 
 - `--cidr`: comma-separated CIDR filters
 - `--ports`: comma-separated ports or ranges
-- `--timeout`: discovery timeout per browse stage
+- `--timeout`: total discovery budget
 - `--probe-timeout`: active probe timeout per asset
 - `--concurrency`: maximum concurrent probes
 - `--iface`: optional interface name

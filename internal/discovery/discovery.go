@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -24,6 +25,7 @@ type Asset struct {
 	Name        string            `json:"name"`
 	ServiceType string            `json:"serviceType"`
 	ServiceName string            `json:"serviceName"`
+	Protocol    string            `json:"protocol,omitempty"`
 	Host        string            `json:"host"`
 	Port        int               `json:"port"`
 	TTL         uint32            `json:"ttl"`
@@ -35,6 +37,9 @@ type Asset struct {
 }
 
 func Run(ctx context.Context, cfg Config) ([]*Asset, []string, error) {
+	discoveryCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
+	defer cancel()
+
 	portMatcher, err := ParsePorts(cfg.Ports)
 	if err != nil {
 		return nil, nil, err
@@ -45,18 +50,48 @@ func Run(ctx context.Context, cfg Config) ([]*Asset, []string, error) {
 		return nil, nil, err
 	}
 
-	serviceTypes, err := browseServiceTypes(ctx, cfg.Iface, cfg.Timeout)
+	typeBudget := serviceTypeBudget(cfg.Timeout)
+	serviceTypes, err := browseServiceTypes(discoveryCtx, cfg.Iface, typeBudget)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	assetsByKey := make(map[string]*Asset)
+	if len(serviceTypes) == 0 {
+		return nil, serviceTypes, nil
+	}
+
+	remaining := remainingBudget(discoveryCtx)
+	if remaining <= 0 {
+		return nil, serviceTypes, nil
+	}
+
+	type result struct {
+		entries []*zeroconf.ServiceEntry
+		err     error
+	}
+
+	results := make(chan result, len(serviceTypes))
+	var wg sync.WaitGroup
 	for _, serviceType := range serviceTypes {
-		entries, err := browseEntries(ctx, cfg.Iface, serviceType, cfg.Timeout)
-		if err != nil {
-			return nil, nil, err
+		serviceType := serviceType
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			entries, err := browseEntries(discoveryCtx, cfg.Iface, serviceType, remaining)
+			results <- result{entries: entries, err: err}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for result := range results {
+		if result.err != nil {
+			return nil, nil, result.err
 		}
-		for _, entry := range entries {
+		for _, entry := range result.entries {
 			asset := toAsset(entry)
 			if !portMatcher.Match(asset.Port) {
 				continue
@@ -156,6 +191,7 @@ func toAsset(entry *zeroconf.ServiceEntry) *Asset {
 		Name:        strings.TrimSpace(decodeEscapedName(entry.Instance)),
 		ServiceType: normalizeServiceType(entry.Service),
 		ServiceName: friendlyServiceName(entry.Service),
+		Protocol:    serviceProtocol(entry.Service),
 		Host:        strings.TrimSuffix(entry.HostName, "."),
 		Port:        entry.Port,
 		TTL:         entry.TTL,
@@ -246,6 +282,43 @@ func friendlyServiceName(service string) string {
 		service = service[:idx]
 	}
 	return service
+}
+
+func serviceProtocol(service string) string {
+	service = normalizeServiceType(service)
+	switch {
+	case strings.HasSuffix(service, "._tcp"):
+		return "tcp"
+	case strings.HasSuffix(service, "._udp"):
+		return "udp"
+	default:
+		return ""
+	}
+}
+
+func serviceTypeBudget(total time.Duration) time.Duration {
+	if total <= 750*time.Millisecond {
+		return total
+	}
+	budget := total / 4
+	if budget < 750*time.Millisecond {
+		budget = 750 * time.Millisecond
+	}
+	if budget > 2*time.Second {
+		budget = 2 * time.Second
+	}
+	if budget > total {
+		return total
+	}
+	return budget
+}
+
+func remainingBudget(ctx context.Context) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return 0
+	}
+	return time.Until(deadline)
 }
 
 func decodeEscapedName(value string) string {

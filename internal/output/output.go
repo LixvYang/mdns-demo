@@ -21,7 +21,7 @@ func Text(report Report) string {
 	var b strings.Builder
 	b.WriteString("services:\n")
 	for _, asset := range report.Services {
-		fmt.Fprintf(&b, "%d/tcp %s:\n", asset.Port, asset.ServiceName)
+		writeServiceHeader(&b, asset)
 		fmt.Fprintf(&b, "Name=%s\n", asset.Name)
 		if len(asset.IPv4) > 0 {
 			fmt.Fprintf(&b, "IPv4=%s\n", strings.Join(asset.IPv4, ","))
@@ -57,6 +57,19 @@ func Text(report Report) string {
 		}
 	}
 	return b.String()
+}
+
+func writeServiceHeader(b *strings.Builder, asset *discovery.Asset) {
+	if asset.Port <= 0 {
+		fmt.Fprintf(b, "%s:\n", asset.ServiceName)
+		return
+	}
+
+	protocol := asset.Protocol
+	if protocol == "" {
+		protocol = "tcp"
+	}
+	fmt.Fprintf(b, "%d/%s %s:\n", asset.Port, protocol, asset.ServiceName)
 }
 
 func formatPairs(keys []string, values map[string]string) string {
